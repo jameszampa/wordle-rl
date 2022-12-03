@@ -43,7 +43,7 @@ class WordleEnv(gym.Env):
         self.guess_rewards = []
         self.games_won = 0
         self.harsh = harsh
-        self.possible_answers = WORD_LIST
+        self.possible_answers = WORD_LIST.copy()
 
     def _new_answer(self):
         self.answer_idx = np.random.randint(0, len(WORD_LIST))
