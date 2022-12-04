@@ -49,13 +49,15 @@ if not os.path.exists(models_dir):
 if not os.path.exists(logdir):
     os.makedirs(logdir)
 
-env = make_vec_env(WordleEnv, n_envs=64, env_kwargs={ 'logdir' : logdir })
+env = make_vec_env(WordleEnv, n_envs=64, env_kwargs={ 'logdir' : logdir, 'harsh' : True })
+#env = WordleEnv(logdir, harsh=True)
 obs = env.reset()
 
-model = PPO("MultiInputPolicy", env, verbose=1, tensorboard_log=logdir, n_steps=1024)
+model_path = f"models/1670110794/6000000.zip"
+model = PPO.load(model_path, env, verbose=1, tensorboard_log=logdir, n_steps=1024)
 
 TIMESTEPS = 1000000
-iters = 0
+iters = 6000000 / TIMESTEPS
 while True:
     iters += 1
     model.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False, tb_log_name=f"PPO", log_interval=1, callback=TensorboardCallback())

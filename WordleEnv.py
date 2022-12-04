@@ -7,15 +7,25 @@ from tensorboardX import SummaryWriter
 
 
 VALID_WORDLE_WORDS_FILE = 'valid-wordle-words.txt'
+VALID_WORDLE_ANSWERS_FILE = 'wordle-answers-alphabetical.txt'
 
 def getWords():
     words = []
     with open(VALID_WORDLE_WORDS_FILE, 'r') as f:
         for line in f.readlines():
             words.append(line.replace('\n', ''))
-    return words
+    return np.array(words)
+
+def getAnswers():
+    words = []
+    with open(VALID_WORDLE_ANSWERS_FILE, 'r') as f:
+        for line in f.readlines():
+            words.append(line.replace('\n', ''))
+    return np.array(words)
+
 
 WORD_LIST = getWords()
+ANSWER_LIST = getAnswers()
 WORD_LENGTH = len(WORD_LIST[0])
 NUM_LETTERS_IN_ALPHABET = 26
 MAX_TRIES = 6
@@ -43,12 +53,12 @@ class WordleEnv(gym.Env):
         self.guess_rewards = []
         self.games_won = 0
         self.harsh = harsh
-        self.possible_answers = WORD_LIST.copy()
+        self.possible_answers = ANSWER_LIST.copy()
 
     def _new_answer(self):
-        self.answer_idx = np.random.randint(0, len(WORD_LIST))
-        self.answer = WORD_LIST[self.answer_idx]
-        self.possible_answers = WORD_LIST.copy()
+        self.answer_idx = np.random.randint(0, len(ANSWER_LIST))
+        self.answer = ANSWER_LIST[self.answer_idx]
+        self.possible_answers = ANSWER_LIST.copy()
 
     def _action_num_to_letter(self, number):
         return chr(97 + number)
@@ -93,23 +103,28 @@ class WordleEnv(gym.Env):
         #     reward += val / 10
         return self._calculate_infomation(self.tries)
 
+
     def _calculate_infomation(self, attempt_idx):
+        prev_total = len(self.possible_answers)
+        #total_good_idxs = np.array([])
         for word_idx, (number, feedback) in enumerate(zip(self.observation['letters'][attempt_idx], self.observation['letter_feedback'][attempt_idx])):
             assert feedback != -1
             assert number != -1
+            # print(self._action_num_to_letter(int(number)))
             if feedback == 0:
-                for word in self.possible_answers:
-                    if self._action_num_to_letter(int(number)) in word:
-                        self.possible_answers.remove(word)
+                good_idxs = np.flatnonzero(np.core.defchararray.find(self.possible_answers, self._action_num_to_letter(int(number))) == -1)
             elif feedback == 1:
-                for word in self.possible_answers:
-                    if not self._action_num_to_letter(int(number)) in word:
-                        self.possible_answers.remove(word)
+                good_idxs = np.flatnonzero(np.core.defchararray.find(self.possible_answers, self._action_num_to_letter(int(number))) != -1)
             elif feedback == 2:
-                for word in self.possible_answers:
-                    if self._action_num_to_letter(int(number)) != word[word_idx]:
-                        self.possible_answers.remove(word)
-        p = len(self.possible_answers) / len(WORD_LIST)
+                good_idxs = np.flatnonzero(np.core.defchararray.find(self.possible_answers, self._action_num_to_letter(int(number)), start=word_idx, end=word_idx+1) != -1)
+            #print(good_idxs)
+            #total_good_idxs = np.concatenate((total_good_idxs, good_idxs), axis=0)
+            good_idxs = good_idxs.astype(np.int64)
+            self.possible_answers = self.possible_answers[good_idxs]
+        #print(len(self.possible_answers))
+        if len(self.possible_answers) == 0:
+            self.possible_answers = [self.answer]
+        p = len(self.possible_answers) / prev_total
         i = np.log2(1 / p)
         return i
 
@@ -117,14 +132,14 @@ class WordleEnv(gym.Env):
         self.reward = 0
         info = {}
         #action = [self._action_letter_to_number(letter) for letter in WORD_LIST[int(action)]]
-        guess = ""
+        self.guess = ""
         for number in action:
-            guess += self._action_num_to_letter(number)
-        if not guess in WORD_LIST:
+            self.guess += self._action_num_to_letter(number)
+        if not self.guess in WORD_LIST:
             self.reward -= 0.1
             if self.harsh:
                 return self.observation, self.reward, self.done, info
-        if guess in self.guesses:
+        if self.guess in self.guesses:
             self.reward -= 0.1
             if self.harsh:
                 return self.observation, self.reward, self.done, info
@@ -139,8 +154,10 @@ class WordleEnv(gym.Env):
                 self.reward = 100
                 self.games_won += 1
             else:
-                if guess in WORD_LIST and not guess in self.guesses:
+                if self.guess in WORD_LIST and not self.guess in self.guesses and self.guess in self.possible_answers:
                     self.reward = self._give_mid_game_reward()
+                else:
+                    self.reward = 0
             self.games += 1
         elif self.isCorrect:
             self.done = True
@@ -148,9 +165,13 @@ class WordleEnv(gym.Env):
             self.games += 1
             self.games_won += 1
         else:
-            if guess in WORD_LIST and not guess in self.guesses:
+            if self.guess in WORD_LIST and not self.guess in self.guesses and self.guess in self.possible_answers:
                 self.reward = self._give_mid_game_reward()
-        self.guesses.append(guess)
+                if self.tries == 0:
+                    self.reward *= 2
+            else:
+                self.reward = 0
+        self.guesses.append(self.guess)
         self.tries += 1
         self.guess_rewards.append(self.reward)
         #print(self.observation)
@@ -164,6 +185,7 @@ class WordleEnv(gym.Env):
         self.done = False
         self.logger.add_scalar('tries', self.tries, self.games)
         self.tries = 0
+        self.guess = ""
         self.guesses = []
         self.guess_rewards = []
         return self.observation
@@ -186,6 +208,14 @@ class WordleEnv(gym.Env):
                                         (x_offset + (col * (box_size + box_gap_width)) + box_size, y_offset + (row * (box_size + box_gap_width)) + box_size),
                                         (int(255 * 0.22), int(255 * 0.22), int(255 * 0.22)),
                                         2)
+                    if self.tries == row:
+                        img = cv2.putText(img,
+                                         self.guess[col].upper(),
+                                         (int(x_offset + (col * (box_size + box_gap_width)) + (box_size / 2) - 12), int(y_offset + (row * (box_size + box_gap_width)) + (box_size / 2)) + 10),
+                                         cv2.FONT_HERSHEY_SIMPLEX,
+                                         1,
+                                         (255, 255, 255),
+                                         2)
                     continue
                 if self.observation['letter_feedback'][row][col] == 2:
                     box_color = (int(255 * 0.32), int(255 * 0.55), int(255 * 0.30))
@@ -215,7 +245,14 @@ class WordleEnv(gym.Env):
                                 2)
         img = cv2.putText(img,
                           f"Answer: {self.answer}",
-                          (int(width / 2) - 100, 35),
+                          (int(width / 2), 35),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          1,
+                          (255, 255, 255),
+                          2)
+        img = cv2.putText(img,
+                          f"Reward: {self.reward}",
+                          (10, 35),
                           cv2.FONT_HERSHEY_SIMPLEX,
                           1,
                           (255, 255, 255),
